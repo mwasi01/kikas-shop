@@ -1,0 +1,41 @@
+<!-- templates/login.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Kika's Shop Inventory</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h1>KIKA'S SHOP</h1>
+            <h2>Inventory Management System</h2>
+            
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <input type="text" name="username" placeholder="Username" required>
+                </div>
+                <div class="form-group">
+                    <input type="password" name="password" placeholder="Password" required>
+                </div>
+                <button type="submit" class="btn-login">LOGIN</button>
+                
+                {% if error %}
+                <div class="error-message">
+                    {{ error }}
+                </div>
+                {% endif %}
+            </form>
+            
+            <div class="demo-credentials">
+                <h3>Demo Credentials:</h3>
+                <p>Username: <strong>admin</strong> | Password: <strong>admin123</strong></p>
+                <p>Username: <strong>manager</strong> | Password: <strong>shop123</strong></p>
+                <p>Username: <strong>kika</strong> | Password: <strong>kika123</strong></p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

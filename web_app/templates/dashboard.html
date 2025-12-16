@@ -1,0 +1,250 @@
+<!-- templates/dashboard.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kika's Shop - Inventory Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-left">
+                <h1><i class="fas fa-tshirt"></i> KIKA'S SHOP INVENTORY</h1>
+                <p class="welcome-msg">Welcome, <strong>{{ username }}</strong>! 
+                    <span id="current-time"></span>
+                </p>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-primary" onclick="showAddItemModal()">
+                    <i class="fas fa-plus"></i> Add New Item
+                </button>
+                <a href="/logout" class="btn btn-danger">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
+        </header>
+
+        <!-- Analytics Dashboard -->
+        <div class="analytics-dashboard">
+            <div class="stats-card total-items">
+                <div class="stats-icon">
+                    <i class="fas fa-boxes"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>Total Items</h3>
+                    <p id="total-items">0</p>
+                </div>
+            </div>
+            
+            <div class="stats-card total-value">
+                <div class="stats-icon">
+                    <i class="fas fa-money-bill-wave"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>Total Value</h3>
+                    <p id="total-value">KSH 0</p>
+                </div>
+            </div>
+            
+            <div class="stats-card categories">
+                <div class="stats-icon">
+                    <i class="fas fa-tags"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>Categories</h3>
+                    <p id="category-count">0</p>
+                </div>
+            </div>
+            
+            <div class="stats-card low-stock">
+                <div class="stats-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>Low Stock</h3>
+                    <p id="low-stock-count">0</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Inventory Management -->
+            <div class="inventory-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-warehouse"></i> Inventory Management</h2>
+                    <div class="section-controls">
+                        <input type="text" id="search-inventory" placeholder="Search items..." 
+                               onkeyup="filterInventory()">
+                        <select id="category-filter" onchange="filterInventory()">
+                            <option value="">All Categories</option>
+                            <!-- Categories will be populated dynamically -->
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="table-container">
+                    <table id="inventory-table">
+                        <thead>
+                            <tr>
+                                <th>Item Name</th>
+                                <th>Category</th>
+                                <th>Size</th>
+                                <th>Color</th>
+                                <th>Price (KSH)</th>
+                                <th>Quantity</th>
+                                <th>Total Value</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventory-body">
+                            <!-- Inventory items will be loaded here -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="table-summary">
+                    <div class="summary-item">
+                        <strong>Showing:</strong> <span id="showing-count">0</span> items
+                    </div>
+                    <div class="summary-item">
+                        <strong>Page Total:</strong> <span id="page-total">0</span> items
+                    </div>
+                    <div class="summary-item">
+                        <strong>Page Value:</strong> KSH <span id="page-value">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Section -->
+            <div class="charts-section">
+                <div class="chart-container">
+                    <h3><i class="fas fa-chart-pie"></i> Inventory by Category</h3>
+                    <canvas id="categoryChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3><i class="fas fa-chart-line"></i> Stock Levels</h3>
+                    <canvas id="stockChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Item Modal -->
+    <div id="itemModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Add New Clothing Item</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="itemForm">
+                    <input type="hidden" id="item-id">
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="item-name">Item Name *</label>
+                            <input type="text" id="item-name" required 
+                                   placeholder="e.g., Cotton T-Shirt, Jeans">
+                        </div>
+                        <div class="form-group">
+                            <label for="item-category">Category *</label>
+                            <select id="item-category" required>
+                                <option value="">Select Category</option>
+                                <option value="Shirts">Shirts</option>
+                                <option value="Pants">Pants</option>
+                                <option value="Jackets">Jackets</option>
+                                <option value="Dresses">Dresses</option>
+                                <option value="Skirts">Skirts</option>
+                                <option value="Accessories">Accessories</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="item-size">Size *</label>
+                            <input type="text" id="item-size" required 
+                                   placeholder="e.g., M, 32, L, One Size">
+                        </div>
+                        <div class="form-group">
+                            <label for="item-color">Color *</label>
+                            <input type="text" id="item-color" required 
+                                   placeholder="e.g., Blue, Black, Red">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="item-price">Price (KSH) *</label>
+                            <input type="number" id="item-price" required 
+                                   min="0" step="0.01" placeholder="e.g., 1200.50">
+                        </div>
+                        <div class="form-group">
+                            <label for="item-quantity">Quantity *</label>
+                            <input type="number" id="item-quantity" required 
+                                   min="0" placeholder="e.g., 50">
+                        </div>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal()">
+                            Cancel
+                        </button>
+                        <button type="submit" class="btn btn-primary">
+                            <span id="submit-btn-text">Add Item</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Quantity Modal -->
+    <div id="quantityModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Update Quantity</h2>
+                <span class="close" onclick="closeQuantityModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>Updating: <strong id="edit-item-name"></strong></p>
+                <p>Current: <span id="current-quantity" class="highlight">0</span> items</p>
+                
+                <div class="quantity-controls">
+                    <button class="qty-btn" onclick="adjustQuantity(-10)">-10</button>
+                    <button class="qty-btn" onclick="adjustQuantity(-5)">-5</button>
+                    <button class="qty-btn" onclick="adjustQuantity(-1)">-1</button>
+                    
+                    <input type="number" id="new-quantity" min="0" class="qty-input">
+                    
+                    <button class="qty-btn" onclick="adjustQuantity(1)">+1</button>
+                    <button class="qty-btn" onclick="adjustQuantity(5)">+5</button>
+                    <button class="qty-btn" onclick="adjustQuantity(10)">+10</button>
+                </div>
+                
+                <div class="quantity-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeQuantityModal()">
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="saveQuantity()">
+                        Update Quantity
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
