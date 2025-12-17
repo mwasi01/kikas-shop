@@ -1,41 +1,201 @@
-<!-- templates/login.html -->
+<!-- web_app/templates/login.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Kika's Shop Inventory</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <title>Kika's Shop - Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+        }
+        
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            width: 350px;
+        }
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo h1 {
+            color: #333;
+            margin: 0;
+        }
+        
+        .logo .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: bold;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+        }
+        
+        .btn-login {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px;
+            width: 100%;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .btn-login:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn-login:active {
+            transform: translateY(0);
+        }
+        
+        .alert {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .alert-error {
+            background-color: #fee;
+            border: 1px solid #fcc;
+            color: #c00;
+        }
+        
+        .alert-success {
+            background-color: #efe;
+            border: 1px solid #cfc;
+            color: #0a0;
+        }
+        
+        .role-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        
+        .admin-badge {
+            background-color: #dc3545;
+            color: white;
+        }
+        
+        .owner-badge {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .worker-badge {
+            background-color: #17a2b8;
+            color: white;
+        }
+        
+        .instructions {
+            background-color: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
 </head>
 <body>
     <div class="login-container">
-        <div class="login-box">
-            <h1>KIKA'S SHOP</h1>
-            <h2>Inventory Management System</h2>
-            
-            <form method="POST" action="/login">
-                <div class="form-group">
-                    <input type="text" name="username" placeholder="Username" required>
-                </div>
-                <div class="form-group">
-                    <input type="password" name="password" placeholder="Password" required>
-                </div>
-                <button type="submit" class="btn-login">LOGIN</button>
-                
-                {% if error %}
-                <div class="error-message">
-                    {{ error }}
-                </div>
-                {% endif %}
-            </form>
-            
-            <div class="demo-credentials">
-                <h3>Demo Credentials:</h3>
-                <p>Username: <strong>admin</strong> | Password: <strong>admin123</strong></p>
-                <p>Username: <strong>manager</strong> | Password: <strong>shop123</strong></p>
-                <p>Username: <strong>kika</strong> | Password: <strong>kika123</strong></p>
-            </div>
+        <div class="logo">
+            <h1>Kika's Shop 🛍️</h1>
+            <div class="subtitle">Inventory Management System</div>
         </div>
+        
+        <div id="alert" class="alert"></div>
+        
+        <!-- Setup instructions (only shown first time) -->
+        {% if setup_required %}
+        <div class="instructions">
+            <h3>⚠️ First Time Setup Required</h3>
+            <p>Please set passwords for admin and owner accounts:</p>
+            <ul>
+                <li><b>Admin</b>: Full system control</li>
+                <li><b>Owner (Kika)</b>: View all data and reports</li>
+            </ul>
+            <p>After setup, you can add workers from the admin panel.</p>
+        </div>
+        {% endif %}
+        
+        <form id="loginForm" method="POST" action="{{ url_for('login') }}">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required 
+                       placeholder="Enter your username">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required 
+                       placeholder="Enter your password">
+            </div>
+            
+            <button type="submit" class="btn-login">
+                {% if setup_required %}Setup Passwords{% else %}Login to System{% endif %}
+            </button>
+        </form>
+        
+        <!-- Demo credentials removed for security -->
     </div>
+
+    <script>
+        // Show error message if login failed
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                document.getElementById('alert').textContent = "{{ messages[0] }}";
+                document.getElementById('alert').className = 'alert alert-error';
+                document.getElementById('alert').style.display = 'block';
+            {% endif %}
+        {% endwith %}
+        
+        // Prevent form resubmission on refresh
+        if (window.history.replaceState) {
+            window.history.replaceState(null, null, window.location.href);
+        }
+    </script>
 </body>
 </html>
