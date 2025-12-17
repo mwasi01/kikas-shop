@@ -1,5 +1,24 @@
 {
-  "admin": "admin123",
-  "manager": "password123",
-  "worker1": "workerpass"
+  "admin": {
+    "username": "admin",
+    "password_hash": "",
+    "role": "admin",
+    "email": "",
+    "full_name": "System Administrator",
+    "created_at": "",
+    "last_login": null,
+    "active": true,
+    "password_changed": false
+  },
+  "kika": {
+    "username": "kika",
+    "password_hash": "",
+    "role": "owner",
+    "email": "",
+    "full_name": "Kika Shop Owner",
+    "created_at": "",
+    "last_login": null,
+    "active": true,
+    "password_changed": false
+  }
 }
