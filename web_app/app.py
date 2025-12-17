@@ -1,298 +1,482 @@
-# app.py - COMPLETE INVENTORY MANAGEMENT WEB APP
-from flask import Flask, render_template, request, session, redirect, url_for, jsonify
-from flask_socketio import SocketIO, emit
-import json
+# web_app/app.py - COMPLETE VERSION FOR RENDER DEPLOYMENT
 import os
+import json
 from datetime import datetime
-from functools import wraps
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 
+# Import our custom modules
+try:
+    from auth import UserManager
+    from email_notifier import EmailNotifier
+except ImportError:
+    # Create dummy classes if modules don't exist yet
+    class UserManager:
+        def __init__(self, *args, **kwargs):
+            self.users = {}
+        def authenticate(self, *args, **kwargs):
+            return False, None
+        def change_password(self, *args, **kwargs):
+            return False
+    class EmailNotifier:
+        def send_inventory_change_email(self, *args, **kwargs):
+            pass
+
+# Initialize Flask app
 app = Flask(__name__)
-app.secret_key = 'kika_shop_inventory_secret_key_2025'
-socketio = SocketIO(app)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Login decorator
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
+# Initialize managers
+user_manager = UserManager('users.json')
+email_notifier = EmailNotifier('email_config.json')
 
+# Inventory file path
+INVENTORY_FILE = 'data/inventory.json'
+
+# ============= HELPER FUNCTIONS =============
+def load_inventory():
+    """Load inventory from JSON file"""
+    try:
+        if os.path.exists(INVENTORY_FILE):
+            with open(INVENTORY_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading inventory: {e}")
+    return {"items": [], "last_updated": datetime.now().isoformat()}
+
+def save_inventory(inventory_data):
+    """Save inventory to JSON file"""
+    try:
+        os.makedirs(os.path.dirname(INVENTORY_FILE), exist_ok=True)
+        inventory_data['last_updated'] = datetime.now().isoformat()
+        with open(INVENTORY_FILE, 'w') as f:
+            json.dump(inventory_data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving inventory: {e}")
+        return False
+
+def is_authenticated():
+    """Check if user is logged in"""
+    return 'username' in session
+
+def requires_role(required_role):
+    """Decorator to check user role"""
+    def decorator(f):
+        from functools import wraps
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not is_authenticated():
+                flash('Please login first')
+                return redirect(url_for('login'))
+            if session.get('role') != required_role and session.get('role') != 'admin':
+                flash('You do not have permission to access this page')
+                return redirect(url_for('dashboard'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+# ============= ROUTES =============
 @app.route('/')
-@login_required
 def index():
-    return render_template('dashboard.html', username=session['user_id'])
+    """Home page - redirect to login or dashboard"""
+    if not is_authenticated():
+        return redirect(url_for('login'))
+    
+    # Check if first-time setup is needed
+    if user_manager.users.get('admin', {}).get('password_hash', '') == '':
+        return redirect(url_for('setup'))
+    
+    return redirect(url_for('dashboard'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        # Create users.json if it doesn't exist
-        if not os.path.exists('users.json'):
-            with open('users.json', 'w') as f:
-                json.dump({'admin': 'admin123', 'manager': 'shop123', 'kika': 'kika123'}, f)
-        
-        # Check credentials
-        try:
-            with open('users.json', 'r') as f:
-                users = json.load(f)
-                if username in users and users[username] == password:
-                    session['user_id'] = username
-                    return redirect(url_for('index'))
-        except Exception as e:
-            print(f"Error: {e}")
-        
-        return render_template('login.html', error='Invalid username or password')
+    """Login page"""
+    # Check if setup is needed
+    admin_user = user_manager.users.get('admin', {})
+    setup_needed = admin_user.get('password_hash', '') == ''
     
-    return render_template('login.html')
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        
+        # Handle first-time setup
+        if setup_needed and username in ['admin', 'kika']:
+            if len(password) < 6:
+                flash('Password must be at least 6 characters')
+                return render_template('login.html', setup_required=True)
+            
+            # Set password for admin or owner
+            user_manager.change_password(username, password)
+            
+            # Ask for email on first setup
+            if username == 'admin':
+                email = request.form.get('email', '').strip()
+                if email:
+                    user_manager.users[username]['email'] = email
+            elif username == 'kika':
+                email = request.form.get('email', '').strip()
+                if email:
+                    user_manager.users[username]['email'] = email
+            
+            user_manager.save_users()
+            flash(f'Password set for {username}. Please login with the new password.')
+            return redirect(url_for('login'))
+        
+        # Normal login authentication
+        authenticated, user = user_manager.authenticate(username, password)
+        
+        if authenticated:
+            # Set session data
+            session['username'] = username
+            session['role'] = user.get('role', 'worker')
+            session['full_name'] = user.get('full_name', username)
+            session['email'] = user.get('email', '')
+            
+            # Force password change for workers with temporary passwords
+            if session['role'] == 'worker' and not user.get('password_changed', False):
+                return redirect(url_for('change_password_first'))
+            
+            flash(f'Welcome back, {session["full_name"]}!')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Invalid username or password')
+    
+    return render_template('login.html', setup_required=setup_needed)
+
+@app.route('/setup', methods=['GET', 'POST'])
+def setup():
+    """First-time setup page for admin and owner"""
+    if request.method == 'POST':
+        admin_pass = request.form.get('admin_password', '').strip()
+        owner_pass = request.form.get('owner_password', '').strip()
+        admin_email = request.form.get('admin_email', '').strip()
+        owner_email = request.form.get('owner_email', '').strip()
+        
+        # Validate passwords
+        if len(admin_pass) < 6 or len(owner_pass) < 6:
+            flash('Passwords must be at least 6 characters long')
+            return render_template('setup.html')
+        
+        # Validate emails
+        if '@' not in admin_email or '@' not in owner_email:
+            flash('Please enter valid email addresses')
+            return render_template('setup.html')
+        
+        # Set passwords and emails
+        user_manager.change_password('admin', admin_pass)
+        user_manager.change_password('kika', owner_pass)
+        user_manager.users['admin']['email'] = admin_email
+        user_manager.users['kika']['email'] = owner_email
+        user_manager.save_users()
+        
+        # Save email configuration
+        email_notifier.config['admin_email'] = admin_email
+        email_notifier.config['owner_email'] = owner_email
+        email_notifier.save_config()
+        
+        flash('Setup completed successfully! You can now login.')
+        return redirect(url_for('login'))
+    
+    return render_template('setup.html')
+
+@app.route('/dashboard')
+def dashboard():
+    """Main dashboard after login"""
+    if not is_authenticated():
+        return redirect(url_for('login'))
+    
+    # Load inventory data
+    inventory = load_inventory()
+    
+    # Calculate statistics
+    total_items = sum(item.get('quantity', 0) for item in inventory.get('items', []))
+    total_value = sum(item.get('quantity', 0) * item.get('price', 0) for item in inventory.get('items', []))
+    
+    return render_template('dashboard.html',
+                         username=session['username'],
+                         role=session['role'],
+                         full_name=session['full_name'],
+                         total_items=total_items,
+                         total_value=total_value)
+
+@app.route('/inventory')
+def inventory():
+    """Inventory management page"""
+    if not is_authenticated():
+        return redirect(url_for('login'))
+    
+    inventory_data = load_inventory()
+    return render_template('inventory.html',
+                         items=inventory_data.get('items', []),
+                         role=session.get('role'))
+
+@app.route('/api/inventory', methods=['GET', 'POST'])
+def api_inventory():
+    """API endpoint for inventory operations"""
+    if not is_authenticated():
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+    
+    if request.method == 'GET':
+        inventory_data = load_inventory()
+        return jsonify(inventory_data)
+    
+    elif request.method == 'POST':
+        data = request.json
+        action = data.get('action')
+        
+        if action == 'update':
+            changes = data.get('changes', {})
+            inventory_data = load_inventory()
+            
+            # Apply changes
+            for item_id, new_quantity in changes.items():
+                for item in inventory_data['items']:
+                    if str(item.get('id')) == str(item_id):
+                        old_quantity = item.get('quantity', 0)
+                        item['quantity'] = new_quantity
+                        item['last_updated'] = datetime.now().isoformat()
+                        item['updated_by'] = session['username']
+            
+            # Save inventory
+            if save_inventory(inventory_data):
+                # Send email notification
+                try:
+                    if changes:
+                        email_notifier.send_inventory_change_email(
+                            changes=changes,
+                            user_making_change=f"{session['full_name']} ({session['role']})"
+                        )
+                except Exception as e:
+                    print(f"Email notification failed: {e}")
+                
+                return jsonify({'success': True, 'message': 'Inventory updated'})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to save inventory'})
+        
+        elif action == 'add_item':
+            new_item = data.get('item', {})
+            if not new_item.get('name'):
+                return jsonify({'success': False, 'error': 'Item name is required'})
+            
+            inventory_data = load_inventory()
+            new_item['id'] = f"item_{int(datetime.now().timestamp())}"
+            new_item['created_at'] = datetime.now().isoformat()
+            new_item['created_by'] = session['username']
+            new_item['last_updated'] = datetime.now().isoformat()
+            
+            inventory_data['items'].append(new_item)
+            
+            if save_inventory(inventory_data):
+                return jsonify({'success': True, 'message': 'Item added', 'item_id': new_item['id']})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to save item'})
+        
+        return jsonify({'success': False, 'error': 'Invalid action'})
+
+@app.route('/change-password-first')
+def change_password_first():
+    """Force password change for first-time workers"""
+    if not is_authenticated() or session.get('role') != 'worker':
+        return redirect(url_for('login'))
+    
+    user = user_manager.users.get(session['username'], {})
+    if user.get('password_changed', True):
+        return redirect(url_for('dashboard'))
+    
+    return render_template('change_password.html', first_time=True)
+
+@app.route('/change-password', methods=['GET', 'POST'])
+def change_password():
+    """Change password page"""
+    if not is_authenticated():
+        return redirect(url_for('login'))
+    
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '').strip()
+        new_password = request.form.get('new_password', '').strip()
+        confirm_password = request.form.get('confirm_password', '').strip()
+        
+        if new_password != confirm_password:
+            flash('New passwords do not match')
+            return render_template('change_password.html')
+        
+        if len(new_password) < 6:
+            flash('New password must be at least 6 characters')
+            return render_template('change_password.html')
+        
+        authenticated, _ = user_manager.authenticate(session['username'], current_password)
+        if not authenticated:
+            flash('Current password is incorrect')
+            return render_template('change_password.html')
+        
+        if user_manager.change_password(session['username'], new_password):
+            flash('Password changed successfully')
+            if session.get('role') == 'worker':
+                session['password_changed'] = True
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Failed to change password')
+    
+    return render_template('change_password.html', first_time=False)
+
+@app.route('/manage-workers')
+@requires_role('admin')
+def manage_workers():
+    """Admin page to manage workers"""
+    workers = user_manager.get_all_workers()
+    return render_template('manage_workers.html', workers=workers)
+
+@app.route('/api/manage-workers', methods=['POST'])
+def api_manage_workers():
+    """API for managing workers"""
+    if not is_authenticated() or session.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    data = request.json
+    action = data.get('action')
+    
+    if action == 'add':
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        full_name = data.get('full_name', '').strip()
+        
+        if not username or not email or not full_name:
+            return jsonify({'success': False, 'error': 'All fields are required'})
+        
+        if '@' not in email:
+            return jsonify({'success': False, 'error': 'Invalid email address'})
+        
+        success, result = user_manager.add_worker(username, email, full_name)
+        
+        if success:
+            try:
+                email_notifier.send_password_reset_email(email, full_name, result)
+            except Exception as e:
+                print(f"Failed to send email: {e}")
+            
+            return jsonify({
+                'success': True,
+                'message': f'Worker added. Temporary password: {result}',
+                'temp_password': result
+            })
+        else:
+            return jsonify({'success': False, 'error': result})
+    
+    elif action == 'reset_password':
+        username = data.get('username', '').strip()
+        
+        if username not in user_manager.users:
+            return jsonify({'success': False, 'error': 'User not found'})
+        
+        import secrets
+        temp_password = secrets.token_urlsafe(8)
+        
+        if user_manager.change_password(username, temp_password):
+            user_manager.users[username]['password_changed'] = False
+            user_manager.save_users()
+            
+            worker = user_manager.users[username]
+            try:
+                email_notifier.send_password_reset_email(
+                    worker['email'],
+                    worker['full_name'],
+                    temp_password
+                )
+            except Exception as e:
+                print(f"Failed to send email: {e}")
+            
+            return jsonify({
+                'success': True,
+                'message': f'Password reset. New temp password: {temp_password}',
+                'temp_password': temp_password
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to reset password'})
+    
+    elif action == 'delete':
+        username = data.get('username', '').strip()
+        
+        if username not in user_manager.users:
+            return jsonify({'success': False, 'error': 'User not found'})
+        
+        if user_manager.users[username]['role'] != 'worker':
+            return jsonify({'success': False, 'error': 'Can only delete worker accounts'})
+        
+        del user_manager.users[username]
+        user_manager.save_users()
+        
+        return jsonify({'success': True, 'message': 'Worker deleted'})
+    
+    return jsonify({'success': False, 'error': 'Invalid action'})
+
+@app.route('/profile')
+def profile():
+    """User profile page"""
+    if not is_authenticated():
+        return redirect(url_for('login'))
+    
+    user_data = user_manager.users.get(session['username'], {})
+    return render_template('profile.html',
+                         user=user_data,
+                         username=session['username'],
+                         role=session['role'])
+
+@app.route('/reports')
+@requires_role('admin')
+def reports():
+    """Reports page for admin and owner"""
+    inventory_data = load_inventory()
+    
+    category_summary = {}
+    size_summary = {}
+    color_summary = {}
+    
+    for item in inventory_data.get('items', []):
+        category = item.get('category', 'Unknown')
+        category_summary[category] = category_summary.get(category, 0) + item.get('quantity', 0)
+        
+        size = item.get('size', 'Unknown')
+        size_summary[size] = size_summary.get(size, 0) + item.get('quantity', 0)
+        
+        color = item.get('color', 'Unknown')
+        color_summary[color] = color_summary.get(color, 0) + item.get('quantity', 0)
+    
+    return render_template('reports.html',
+                         category_summary=category_summary,
+                         size_summary=size_summary,
+                         color_summary=color_summary,
+                         total_items=sum(item.get('quantity', 0) for item in inventory_data.get('items', [])))
 
 @app.route('/logout')
 def logout():
-    session.pop('user_id', None)
+    """Logout user"""
+    session.clear()
+    flash('You have been logged out successfully')
     return redirect(url_for('login'))
 
-# API endpoints
-@app.route('/api/inventory')
-@login_required
-def get_inventory():
-    try:
-        inventory = load_inventory()
-        return jsonify(inventory)
-    except Exception as e:
-        return jsonify({'error': str(e), 'items': []}), 500
+@app.route('/health')
+def health():
+    """Health check endpoint for deployment"""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
-@app.route('/api/add_item', methods=['POST'])
-@login_required
-def add_item():
-    try:
-        data = request.json
-        print(f"Adding item: {data}")  # Debug
-        
-        # Validate required fields
-        required = ['name', 'category', 'size', 'color', 'price', 'quantity']
-        for field in required:
-            if not data.get(field):
-                return jsonify({'success': False, 'error': f'{field} is required'})
-        
-        # Load current inventory
-        inventory = load_inventory()
-        
-        # Create new item
-        new_item = {
-            'id': f"item_{int(datetime.now().timestamp())}",
-            'name': data['name'],
-            'category': data['category'],
-            'size': data['size'],
-            'color': data['color'],
-            'price': float(data['price']),
-            'quantity': int(data['quantity']),
-            'created_by': session['user_id'],
-            'created_at': datetime.now().isoformat(),
-            'last_updated': datetime.now().isoformat(),
-            'updated_by': session['user_id']
-        }
-        
-        # Add to inventory
-        inventory['items'].append(new_item)
-        
-        # Save inventory
-        save_inventory(inventory)
-        
-        # Broadcast update
-        socketio.emit('inventory_update', inventory)
-        
-        return jsonify({'success': True, 'item': new_item})
-        
-    except Exception as e:
-        print(f"Error adding item: {e}")
-        return jsonify({'success': False, 'error': str(e)})
+# ============= ERROR HANDLERS =============
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('error.html', error='Page not found'), 404
 
-@app.route('/api/update_item', methods=['POST'])
-@login_required
-def update_item():
-    try:
-        data = request.json
-        item_id = data.get('id')
-        
-        if not item_id:
-            return jsonify({'success': False, 'error': 'Item ID is required'})
-        
-        inventory = load_inventory()
-        
-        # Find and update item
-        updated = False
-        for item in inventory['items']:
-            if item['id'] == item_id:
-                # Update fields
-                item['name'] = data.get('name', item['name'])
-                item['category'] = data.get('category', item['category'])
-                item['size'] = data.get('size', item['size'])
-                item['color'] = data.get('color', item['color'])
-                item['price'] = float(data.get('price', item['price']))
-                item['quantity'] = int(data.get('quantity', item['quantity']))
-                item['last_updated'] = datetime.now().isoformat()
-                item['updated_by'] = session['user_id']
-                updated = True
-                break
-        
-        if updated:
-            save_inventory(inventory)
-            socketio.emit('inventory_update', inventory)
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'error': 'Item not found'})
-            
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+@app.errorhandler(500)
+def internal_error(error):
+    return render_template('error.html', error='Internal server error'), 500
 
-@app.route('/api/delete_item', methods=['POST'])
-@login_required
-def delete_item():
-    try:
-        data = request.json
-        item_id = data.get('id')
-        
-        if not item_id:
-            return jsonify({'success': False, 'error': 'Item ID is required'})
-        
-        inventory = load_inventory()
-        
-        # Filter out the item to delete
-        original_count = len(inventory['items'])
-        inventory['items'] = [item for item in inventory['items'] if item['id'] != item_id]
-        
-        if len(inventory['items']) < original_count:
-            save_inventory(inventory)
-            socketio.emit('inventory_update', inventory)
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'error': 'Item not found'})
-            
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/api/update_quantity', methods=['POST'])
-@login_required
-def update_quantity():
-    try:
-        data = request.json
-        item_id = data.get('item_id')
-        new_quantity = int(data.get('quantity', 0))
-        
-        inventory = load_inventory()
-        
-        for item in inventory['items']:
-            if item['id'] == item_id:
-                old_quantity = item['quantity']
-                item['quantity'] = new_quantity
-                item['last_updated'] = datetime.now().isoformat()
-                item['updated_by'] = session['user_id']
-                
-                save_inventory(inventory)
-                
-                # Calculate discrepancy
-                discrepancy = new_quantity - old_quantity
-                
-                socketio.emit('inventory_update', inventory)
-                return jsonify({
-                    'success': True, 
-                    'discrepancy': discrepancy,
-                    'old_quantity': old_quantity
-                })
-        
-        return jsonify({'success': False, 'error': 'Item not found'})
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/api/analytics')
-@login_required
-def get_analytics():
-    try:
-        inventory = load_inventory()
-        
-        total_items = 0
-        total_value = 0
-        category_counts = {}
-        
-        for item in inventory['items']:
-            total_items += item['quantity']
-            item_value = item['price'] * item['quantity']
-            total_value += item_value
-            
-            category = item['category']
-            if category not in category_counts:
-                category_counts[category] = 0
-            category_counts[category] += item['quantity']
-        
-        return jsonify({
-            'success': True,
-            'total_items': total_items,
-            'total_value': total_value,
-            'category_counts': category_counts,
-            'currency': 'KSH'
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-# Helper functions
-def load_inventory():
-    """Load inventory from shared or local file"""
-    shared_path = '../shared/inventory.json'
-    local_path = 'data/inventory.json'
-    
-    # Try shared location first
-    for path in [shared_path, local_path]:
-        try:
-            if os.path.exists(path):
-                with open(path, 'r') as f:
-                    return json.load(f)
-        except:
-            continue
-    
-    # Return empty inventory if no file exists
-    return {'items': []}
-
-def save_inventory(inventory):
-    """Save inventory to both shared and local locations"""
-    # Save to local
-    os.makedirs('data', exist_ok=True)
-    local_path = 'data/inventory.json'
-    with open(local_path, 'w') as f:
-        json.dump(inventory, f, indent=2)
-    
-    # Save to shared location if possible
-    shared_path = '../shared/inventory.json'
-    if os.path.exists(os.path.dirname(shared_path)):
-        with open(shared_path, 'w') as f:
-            json.dump(inventory, f, indent=2)
-
+# ============= MAIN ENTRY POINT FOR RENDER =============
 if __name__ == '__main__':
     # Create necessary directories
     os.makedirs('data', exist_ok=True)
+    os.makedirs('templates', exist_ok=True)
+    os.makedirs('static', exist_ok=True)
     
-    # Create default users if not exists
-    if not os.path.exists('users.json'):
-        with open('users.json', 'w') as f:
-            json.dump({
-                'admin': 'admin123',
-                'manager': 'shop123',
-                'kika': 'kika123'
-            }, f, indent=2)
+    # Get port from environment variable or use default
+    port = int(os.environ.get('PORT', 5000))
     
-    print("=" * 50)
-    print("KIKA'S SHOP - INVENTORY MANAGEMENT SYSTEM")
-    print("=" * 50)
-    print("Web App running on: http://localhost:5000")
-    print("Login credentials:")
-    print("  - Username: admin | Password: admin123")
-    print("  - Username: manager | Password: shop123")
-    print("  - Username: kika | Password: kika123")
-    print("=" * 50)
-   
-    port = int(os.environ.get('PORT', 5000)) 
-    socketio.run(app, debug=True, port=5000)
+    # Run the app
+    app.run(host='0.0.0.0', port=port, debug=False)
