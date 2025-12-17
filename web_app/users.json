@@ -6,8 +6,6 @@
     "email": "",
     "full_name": "System Administrator",
     "created_at": "",
-    "last_login": null,
-    "active": true,
     "password_changed": false
   },
   "kika": {
@@ -17,8 +15,6 @@
     "email": "",
     "full_name": "Kika Shop Owner",
     "created_at": "",
-    "last_login": null,
-    "active": true,
     "password_changed": false
   }
 }
