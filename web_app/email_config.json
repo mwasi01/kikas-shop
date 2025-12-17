@@ -1,8 +1,9 @@
 {
   "smtp_server": "smtp.gmail.com",
   "smtp_port": 587,
-  "sender_email": "your-email@gmail.com",
-  "sender_password": "your-app-specific-password",
-  "admin_email": "your-personal-email@gmail.com",
-  "owner_email": "kika-email@gmail.com"
+  "sender_email": "",
+  "sender_password": "",
+  "admin_email": "",
+  "owner_email": "",
+  "enabled": false
 }
